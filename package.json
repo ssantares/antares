@@ -1,9 +1,18 @@
 {
-  "name": "auth-server",
+  "name": "antares-api",
   "version": "1.0.0",
+  "description": "Antares authentication server",
   "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "helmet": "^7.0.0",
+    "express-rate-limit": "^7.0.0",
+    "dotenv": "^16.4.5"
   }
 }
-
