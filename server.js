@@ -1,112 +1,75 @@
-require("dotenv").config();
-
+// server.js
 const express = require("express");
-const rateLimit = require("express-rate-limit");
-const helmet = require("helmet");
+const cors = require("cors");
+const bodyParser = require("body-parser");
 const crypto = require("crypto");
-
 const app = express();
-app.use(express.json());
-app.use(helmet());
 
-/* ================= RATE LIMIT ================= */
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 10, // 10 req/min per IP
-  standardHeaders: true,
-  legacyHeaders: false
-});
-app.use(limiter);
+// Use environment variable for ADMIN_SECRET
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
+if (!ADMIN_SECRET) {
+    console.error("Error: ADMIN_SECRET environment variable not set!");
+    process.exit(1);
+}
 
-/* ================= IN-MEMORY DB =================
-   Replace with Mongo/SQLite later
-*/
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
+
+// In-memory database (replace with your DB)
 const database = {
-  keys: {}
+    keys: {} // { key: { createdAt, expires } }
 };
 
-/* ================= UTILS ================= */
+// Utility: generate unique key
 function generateKey() {
-  return crypto.randomBytes(16).toString("hex").toUpperCase();
+    return "ANTARES-" + crypto.randomBytes(4).toString("hex").toUpperCase() + "-" +
+        crypto.randomBytes(4).toString("hex").toUpperCase();
 }
 
-function hash(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-/* ================= ADMIN KEY GENERATION =================
-   PROTECTED BY SECRET
-*/
+// Generate key endpoint
 app.post("/genkey", (req, res) => {
-  const adminSecret = req.headers["x-admin-secret"];
+    const adminSecret = req.headers["x-admin-secret"];
 
-  if (adminSecret !== process.env.ADMIN_SECRET) {
-    return res.status(403).json({ error: "Forbidden" });
-  }
+    // 1. Reject if missing header
+    if (!adminSecret) {
+        return res.status(403).json({ error: "Forbidden - missing x-admin-secret header" });
+    }
 
-  const key = generateKey();
+    // 2. Reject if header doesn't match environment variable
+    if (adminSecret !== ADMIN_SECRET) {
+        return res.status(403).json({ error: "Forbidden - invalid admin secret" });
+    }
 
-  database.keys[key] = {
-    used: false,
-    userId: null,
-    hwid: null,
-    ip: null,
-    createdAt: Date.now()
-  };
+    // 3. Generate key
+    const key = generateKey();
 
-  res.json({ key });
-});
+    // Optional: set expiration in hours from body, default 24h
+    const expiresInHours = req.body.expires_in || 24;
+    const now = Date.now();
+    const expires = now + expiresInHours * 60 * 60 * 1000;
 
-/* ================= KEY VALIDATION (ROBLOX CALLS THIS) ================= */
-app.post("/validate", (req, res) => {
-  const { key, userId, hwid } = req.body;
-  const ip =
-    req.headers["x-forwarded-for"] ||
-    req.socket.remoteAddress;
+    // 4. Save key in database
+    database.keys[key] = {
+        createdAt: now,
+        expires: expires
+    };
 
-  if (!key || !userId || !hwid) {
-    return res.json({ valid: false });
-  }
-
-  const record = database.keys[key];
-  if (!record) {
-    return res.json({ valid: false });
-  }
-
-  const hwidHash = hash(hwid);
-
-  // FIRST USE → BIND
-  if (!record.used) {
-    record.used = true;
-    record.userId = String(userId);
-    record.hwid = hwidHash;
-    record.ip = ip;
-
-    return res.json({ valid: true, first: true });
-  }
-
-  // ALREADY USED → VERIFY
-  if (
-    record.userId !== String(userId) ||
-    record.hwid !== hwidHash
-  ) {
+    // 5. Respond with the key and expiry
     return res.json({
-      valid: false,
-      reason: "Key bound to another device"
+        key: key,
+        expires: expires
     });
-  }
-
-  res.json({ valid: true });
 });
 
-/* ================= ERROR HANDLER ================= */
-app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: "Internal Server Error" });
+// Health check
+app.get("/", (req, res) => {
+    res.send("Antares Key Server running!");
 });
 
-/* ================= START ================= */
+// Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-  console.log(`Antares API running on port ${PORT}`)
-);
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
