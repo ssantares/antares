@@ -1,51 +1,70 @@
 const express = require("express");
-const cors = require("cors");
 const bodyParser = require("body-parser");
-const { v4: uuid } = require("uuid");
 
 const app = express();
-app.use(cors());
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
-const ADMIN_SECRET = process.env.ADMIN_SECRET || "antares8282jviwm1lapci2n1d";
-
-// In-memory storage for simplicity
-const sessions = {};
-const keys = {}; // key: true if used
-
-// Generate a session
-app.post("/session", (req, res) => {
-  const sessionId = uuid();
-  sessions[sessionId] = { created: Date.now() };
-  res.json({ session: sessionId });
-});
-
-// Redeem a key
-app.post("/redeem", (req, res) => {
-  const { session, key, playerId } = req.body;
-  if (!session || !sessions[session]) return res.status(400).json({ success: false, error: "Invalid session" });
-  if (!key) return res.status(400).json({ success: false, error: "Missing key" });
-
-  if (keys[key]) {
-    return res.json({ success: false }); // already used
+/*
+KEY STORAGE FORMAT:
+keys = {
+  "KEYSTRING": {
+     used: false,
+     owner: null
   }
+}
+*/
+const keys = {};
 
-  // Mark key as used
-  keys[key] = true;
-  res.json({ success: true });
+// SESSION STORAGE
+const sessions = {};
+
+// ===== CREATE A SESSION =====
+app.post("/session", (req, res) => {
+	const session = Math.random().toString(36).substring(2, 15);
+	sessions[session] = { created: Date.now() };
+	res.json({ session });
 });
 
-// Admin endpoint to generate keys
-app.post("/genkey", (req, res) => {
-  const secret = req.headers["x-admin-secret"];
-  if (secret !== ADMIN_SECRET) return res.status(403).json({ error: "Invalid admin secret" });
+// ===== REDEEM KEY =====
+app.post("/redeem", (req, res) => {
+	const { session, key, playerId } = req.body;
 
-  const newKey = uuid().replace(/-/g, "").slice(0, 32); // 32-char key
-  keys[newKey] = false; // not used
-  res.json({ key: newKey });
+	if (!sessions[session]) {
+		return res.json({ success: false, error: "Invalid session" });
+	}
+
+	if (!keys[key]) {
+		return res.json({ success: false, error: "Invalid key" });
+	}
+
+	const entry = keys[key];
+
+	// 🔒 Key already redeemed by someone else
+	if (entry.used && entry.owner !== playerId) {
+		return res.json({ success: false, error: "Key already used" });
+	}
+
+	// 🔒 First redemption
+	if (!entry.used) {
+		entry.used = true;
+		entry.owner = playerId;
+		return res.json({ success: true });
+	}
+
+	// 🔓 Same player reusing their key
+	if (entry.owner === playerId) {
+		return res.json({ success: true });
+	}
+
+	res.json({ success: false });
 });
 
-app.listen(PORT, () => {
-  console.log(`Antares server running on port ${PORT}`);
+// ===== GENERATE KEY (YOUR EXISTING PAGE) =====
+app.get("/genkey", (req, res) => {
+	const key = Math.random().toString(36).substring(2, 14).toUpperCase();
+	keys[key] = { used: false, owner: null };
+	res.send(key);
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Antares server running"));
